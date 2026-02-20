@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vokabel-Scanner Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <style>
+        :root { --primary: #2563eb; --success: #22c55e; --fail: #ef4444; }
+        body { font-family: -apple-system, sans-serif; background: #f0f2f5; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        
+        .header { background: white; padding: 15px; border-radius: 15px; width: 100%; max-width: 400px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; text-align: center; }
+        #loading { color: var(--primary); font-weight: bold; display: none; margin-top: 10px; }
+
+        .card { width: 100%; max-width: 400px; height: 280px; perspective: 1000px; margin-bottom: 20px; }
+        .card-inner { position: relative; width: 100%; height: 100%; transition: transform 0.4s; transform-style: preserve-3d; cursor: pointer; }
+        .card.flipped .card-inner { transform: rotateY(180deg); }
+        
+        .card-front, .card-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 25px; background: white; box-shadow: 0 8px 20px rgba(0,0,0,0.12); padding: 30px; box-sizing: border-box; text-align: center; }
+        .card-back { transform: rotateY(180deg); background: #f0fdf4; border: 3px solid var(--success); }
+        
+        .label { font-size: 13px; color: #94a3b8; font-weight: bold; letter-spacing: 1px; margin-bottom: 15px; }
+        .word { font-size: 32px; font-weight: 800; color: #1e293b; line-height: 1.2; }
+
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; width: 100%; max-width: 400px; }
+        button { padding: 22px; border: none; border-radius: 18px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn-fail { background: #fee2e2; color: var(--fail); }
+        .btn-success { background: #dcfce7; color: var(--success); }
+
+        .stats { margin-top: 20px; font-size: 14px; color: #64748b; background: white; padding: 10px 20px; border-radius: 20px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <strong>Vokabel-Foto hochladen</strong><br>
+        <input type="file" id="imageInput" accept="image/*" style="margin-top: 10px;">
+        <div id="loading">🔍 Scan läuft... Bitte warten...</div>
+    </div>
+
+    <div class="card" id="card" onclick="this.classList.toggle('flipped')">
+        <div class="card-inner">
+            <div class="card-front">
+                <span class="label">ENGLISCH</span>
+                <div class="word" id="frontText">Bereit</div>
+            </div>
+            <div class="card-back">
+                <span class="label">DEUTSCH (BLAU)</span>
+                <div class="word" id="backText">...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn-fail" onclick="handleAnswer(false)">NOCHMAL</button>
+        <button class="btn-success" onclick="handleAnswer(true)">GECHECKT</button>
+    </div>
+
+    <div class="stats">
+        Liste: <span id="remaining">0</span> Vokabeln übrig
+    </div>
+
+    <script>
+        let vocabList = [];
+        let totalOriginal = 0;
+
+        const imageInput = document.getElementById('imageInput');
+        const loading = document.getElementById('loading');
+        
+        imageInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            loading.style.display = "block";
+            const worker = await Tesseract.createWorker('eng+deu');
+            const { data: { text } } = await worker.recognize(file);
+            await worker.terminate();
+
+            // SCHARFE FILTER-LOGIK
+            const lines = text.split('\n');
+            vocabList = [];
+
+            lines.forEach(line => {
+                // 1. Lautschrift entfernen [...] oder /.../
+                let clean = line.replace(/\[.*?\]|\/.*?\//g, '').trim();
+                
+                // 2. Wir suchen nach Zeilen, die meistens mit einem Wort anfangen, 
+                // dann evtl. ein Symbol haben und mit einem Wort enden.
+                // Wir trennen bei großen Lücken oder Zeichen wie -, :, |, ~
+                let parts = clean.split(/\s{2,}|[:\-\|~]/).map(p => p.trim()).filter(p => p.length > 1);
+
+                // 3. Nur Zeilen nehmen, die kurz genug für Vokabeln sind (keine langen Sätze)
+                // Ein Beispielsatz hat meistens mehr als 5-6 Wörter.
+                if (parts.length >= 2) {
+                    let en = parts[0];
+                    let de = parts[parts.length - 1]; // Das letzte Element ist meist die deutsche Übersetzung
+
+                    if (en.split(' ').length < 4 && de.split(' ').length < 4) {
+                        vocabList.push({ foreign: en, native: de });
+                    }
+                }
+            });
+
+            loading.style.display = "none";
+            updateCard();
+            updateStats();
+        });
+
+        function updateCard() {
+            const card = document.getElementById('card');
+            card.classList.remove('flipped');
+            if (vocabList.length > 0) {
+                document.getElementById('frontText').innerText = vocabList[0].foreign;
+                document.getElementById('backText').innerText = vocabList[0].native;
+            } else {
+                document.getElementById('frontText').innerText = "Fertig!";
+                document.getElementById('backText').innerText = "Alles gelernt!";
+            }
+        }
+
+        function handleAnswer(isKnown) {
+            if (vocabList.length === 0) return;
+            const current = vocabList.shift();
+            if (!isKnown) vocabList.push(current);
+            
+            setTimeout(() => {
+                updateCard();
+                updateStats();
+            }, 50);
+        }
+
+        function updateStats() {
+            document.getElementById('remaining').innerText = vocabList.length;
+        }
+    </script>
+</body>
+</html>
